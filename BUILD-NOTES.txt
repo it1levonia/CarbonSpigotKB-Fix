@@ -1,0 +1,18 @@
+CarbonSpigot Java 21 build-ready copy
+
+Changes made only for compilation:
+- Lombok updated to 1.18.34 in API/Server build metadata.
+- API annotation processor Lombok updated to 1.18.34.
+- Server gets explicit maven-compiler-plugin 3.11.0 targeting Java 8 bytecode.
+- No Carbon gameplay/server source code was intentionally changed.
+
+Windows: run BUILD-WINDOWS.bat
+Linux: run ./BUILD-LINUX.sh
+
+Requires Maven and internet access on first build so dependencies can be downloaded.
+
+--- yourserver.com knockback fix (see yourserver-kb-fix.patch) ---
+- KnockbackHandler: version now defaults to 6 (was never set -> 0 -> legacy path).
+- KnockbackProfile#callVelocity: removed legacy "+0.5 vertical" packet; motY restore uses velocity[1].
+- EasyKnockbackProfile: final Y-LIMIT clamp after sprint extra, working DYNAMIC-LIMIT
+  (in-air hits can't push you higher than you're already rising), horizontal limit in all directions.

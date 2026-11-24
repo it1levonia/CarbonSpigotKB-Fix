@@ -1,0 +1,103 @@
+diff -ru orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackHandler.java x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackHandler.java
+--- orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackHandler.java	2026-11-22 06:45:55.024835960 +0000
++++ x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackHandler.java	2026-11-22 06:46:00.492750786 +0000
+@@ -39,7 +39,10 @@
+             "though, because this configuration can easily break!",
+             "",
+     };
+-    @Setter private int version;
++    // yourserver.com fix: this was never set anywhere, so it stayed 0 and forced the
++    // "legacy" path in KnockbackProfile#callVelocity, which adds +0.5 to every
++    // vertical knockback packet (players flew 4-5 blocks up). 6 = modern path.
++    @Setter private int version = 6;
+ 
+     private final Map<String, KnockbackProfile> profiles = new ConcurrentHashMap<>();
+     private YamlFile config;
+diff -ru orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackProfile.java x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackProfile.java
+--- orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackProfile.java	2026-11-22 06:45:55.024849654 +0000
++++ x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/KnockbackProfile.java	2026-11-22 06:46:05.576751088 +0000
+@@ -118,13 +118,10 @@
+         if (!event.isCancelled()) {
+             vector = event.getVelocity();
+ 
+-            // Legacy knockback support.
+-            if (knockbackHandler.getVersion() <= 5) {
+-                attackedPlayer.playerConnection.sendPacket(new PacketPlayOutEntityVelocity(attackedPlayer.getId(), vector.getX(), vector.getY() + 0.5, vector.getZ()));
+-            } else {
+-                attackedPlayer.getBukkitEntity().setVelocity(vector);
+-                attackedPlayer.playerConnection.sendPacket(new PacketPlayOutEntityVelocity(attackedPlayer.getId(), vector.getX(), vector.getY(), vector.getZ()));
+-            }
++            // yourserver.com fix: removed the "legacy" branch that sent vector.getY() + 0.5
++            // to the client on every hit. Always send the real velocity.
++            attackedPlayer.getBukkitEntity().setVelocity(vector);
++            attackedPlayer.playerConnection.sendPacket(new PacketPlayOutEntityVelocity(attackedPlayer.getId(), vector.getX(), vector.getY(), vector.getZ()));
+ 
+             // Turn off fall damage
+             if (attackedPlayer.fallDistance > 0) {
+@@ -135,7 +132,7 @@
+ 
+         attackedPlayer.velocityChanged = false;
+         attackedPlayer.motX = velocity[0];
+-        attackedPlayer.motY = knockbackHandler.getVersion() <= 5 ? velocity[0] : velocity[1];
++        attackedPlayer.motY = velocity[1]; // yourserver.com fix: legacy branch restored motY from motX (velocity[0])
+         attackedPlayer.motZ = velocity[2];
+     }
+ 
+diff -ru orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/impl/EasyKnockbackProfile.java x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/impl/EasyKnockbackProfile.java
+--- orig/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/impl/EasyKnockbackProfile.java	2026-11-22 06:45:55.024767369 +0000
++++ x/CarbonSpigot-Java21-BuildReady/Carbon-Server/src/main/java/xyz/refinedev/spigot/knockback/impl/EasyKnockbackProfile.java	2026-11-22 06:46:21.880752058 +0000
+@@ -62,11 +62,17 @@
+         attacker.motZ *= 0.6D;
+         attacker.setSprinting(false);
+ 
++        // yourserver.com fix: the sprint/enchant extra above was added AFTER the Y-limit,
++        // so sprint hits went over Y-LIMIT. Clamp the final vertical here.
++        if (entity.motY > verticalLimit.getValue()) {
++            entity.motY = verticalLimit.getValue();
++        }
++
+         if (entity.getBukkitEntity().hasMetadata("NPC") || entity.velocityChanged && entity instanceof EntityPlayer) {
+             EntityPlayer attackedPlayer = (EntityPlayer) entity;
+-            if (entity.motY >= verticalLimit.getValue() && dynamicLimit.getValue()) {
+-                velocity[1] = 0.0D;
+-            }
++            // (yourserver.com: dynamic limit is now handled in attackLiving, where it actually
++            //  changes the velocity sent to the client. The old code here only edited
++            //  the server-side restore value, so it never did anything.)
+ 
+             this.callVelocity(attackedPlayer, attackedPlayer.getBukkitEntity().getVelocity(), velocity);
+         }
+@@ -92,6 +98,8 @@
+ 
+             double h = horizontal.getValue();
+             double v = vertical.getValue();
++            double preMotY = entity.motY;
++            boolean airborne = !entity.onGround;
+ 
+             if (friction.getValue() != 0) {
+                 entity.motX /= friction.getValue();
+@@ -107,9 +115,22 @@
+                 entity.motY = verticalLimit.getValue();
+             }
+ 
++            // yourserver.com fix: real dynamic limit. When a player is hit while already in the
++            // air and still rising, the hit can't push them higher than they were
++            // already going, so combos stay low instead of climbing.
++            if (dynamicLimit.getValue() && airborne && preMotY > 0.0D && entity.motY > preMotY) {
++                entity.motY = preMotY;
++            }
++
++            // yourserver.com fix: old code only capped positive X/Z, so knockback towards
++            // -X / -Z was never limited. Cap the horizontal speed in every direction.
+             if (limitHorizontal.getValue()) {
+-                if (entity.motX > horizontalLimit.getValue()) entity.motX = horizontalLimit.getValue();
+-                if (entity.motZ > horizontalLimit.getValue()) entity.motZ = horizontalLimit.getValue();
++                double hl = horizontalLimit.getValue();
++                double hSpeed = Math.sqrt(entity.motX * entity.motX + entity.motZ * entity.motZ);
++                if (hSpeed > hl && hSpeed > 0.0D) {
++                    entity.motX = entity.motX / hSpeed * hl;
++                    entity.motZ = entity.motZ / hSpeed * hl;
++                }
+             }
+         }
+     }
