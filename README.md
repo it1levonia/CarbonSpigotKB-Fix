@@ -15,4 +15,4 @@
 
 **Note** - This addon focuses on fixing CarbonSpigot knockback issues and providing smoother, more stable knockback.
 
-## Link For Cracked CarbonSpigot -
+## Link For Cracked CarbonSpigot - I dont want to get me Su'ed
